@@ -6,15 +6,21 @@ import { namesMatch } from "./events";
 import { parseBiogs } from "./parse-biogs";
 import { assembleGalaSwims, isOtherGender, parseResultsDocument } from "./parse-sportsystems";
 import { mapPool } from "./pool";
+import { resolveResultsIndex } from "./meet-source";
+import { readSavedResults, type SavedResultsLink } from "./results-store";
 import { isSwimManagerLogin } from "./swimmanager";
 import type { DashboardModel, MeetIndex, SwimmerProfile } from "./types";
 
 const BIOG_URL = "https://www.swimmingresults.org/biogs/biogs_details.php";
 
-export async function loadDashboard(): Promise<DashboardModel> {
+export async function loadDashboard(fresh = false): Promise<DashboardModel> {
   const config = getConfig();
+  const saved = await readSavedResultsSafe();
+  const bucket = fresh ? `fresh-${Date.now()}` : String(Math.floor(Date.now() / (config.revalidateSeconds * 1000)));
   try {
-    return await cachedDashboard(JSON.stringify(publicConfig(config)));
+    const model = await cachedDashboard(JSON.stringify({ ...publicConfig(config), saved: saved.link }), bucket);
+    if (!saved.warning) return model;
+    return { ...model, warnings: [saved.warning, ...model.warnings] };
   } catch (error) {
     const message = error instanceof Error ? error.message : "The results could not be loaded.";
     return buildDashboard({
@@ -33,17 +39,20 @@ export async function loadDashboard(): Promise<DashboardModel> {
 }
 
 const cachedDashboard = unstable_cache(
-  async (encoded: string) => assembleDashboard(JSON.parse(encoded) as PublicConfig),
-  ["mia-dashboard-v1"],
+  async (encoded: string, _bucket: string) => assembleDashboard(JSON.parse(encoded) as PublicConfig),
+  ["mia-dashboard-v3"],
   { revalidate: revalidateSeconds(), tags: ["swim-data"] },
 );
 
 async function assembleDashboard(config: PublicConfig): Promise<DashboardModel> {
   const warnings: string[] = [];
+  const notes: string[] = [];
   const sources: { label: string; href: string }[] = [];
+  const results = await resolveResultsIndex({ saved: config.saved, fallback: config.resultsIndexUrl });
+  sources.push({ label: "Results index", href: results.url });
   const profile = await loadProfile(config, warnings, sources);
-  const meet = await loadMeet(config, warnings, sources);
-  const swims = meet ? await loadSwims(config, meet, profile, warnings) : [];
+  const meet = await loadMeet(results.url, warnings);
+  const swims = meet ? await loadSwims(config, meet, profile, warnings, notes) : [];
   if (config.swimManagerUrl) await noteSwimManager(config.swimManagerUrl, warnings, sources);
 
   return buildDashboard({
@@ -51,10 +60,13 @@ async function assembleDashboard(config: PublicConfig): Promise<DashboardModel> 
     swims,
     meetName: meet?.index.name ?? null,
     meetCourse: config.meetCourse,
+    resultsUrl: results.url,
+    resultsHow: results.how,
     rankingsAgeAt: config.rankingsAgeAt,
     fallbackName: config.swimmerName,
     membership: config.membership,
     warnings,
+    notes,
     sources,
     fetchedAt: new Date().toISOString(),
   });
@@ -93,12 +105,10 @@ async function loadProfile(
 }
 
 async function loadMeet(
-  config: PublicConfig,
+  resultsIndexUrl: string,
   warnings: string[],
-  sources: { label: string; href: string }[],
 ): Promise<{ index: MeetIndex; base: string } | null> {
-  sources.push({ label: "Results index", href: config.resultsIndexUrl });
-  const indexPage = await fetchText(config.resultsIndexUrl);
+  const indexPage = await fetchText(resultsIndexUrl);
   if (!indexPage.ok) {
     warnings.push(`The results index did not load (${indexPage.status || indexPage.error || "no response"}).`);
     return null;
@@ -129,6 +139,7 @@ async function loadSwims(
   meet: { index: MeetIndex; base: string },
   profile: SwimmerProfile | null,
   warnings: string[],
+  notes: string[],
 ) {
   const gender = profile?.gender ?? config.gender;
   const name = profile?.name || config.swimmerName;
@@ -136,7 +147,7 @@ async function loadSwims(
   const resultPages = await mapPool(events, 3, 150, async (event) => {
     const href = event.resultHref ?? "";
     const page = await fetchText(new URL(href, meet.base).toString());
-    return { href, html: page.text, kind: "result" as const, ok: page.ok };
+    return { href, html: page.text, kind: "result" as const, ok: page.ok, status: page.status };
   });
 
   const withResults = resultPages.filter((page) => page.ok);
@@ -153,7 +164,11 @@ async function loadSwims(
     return { href, html: page.text, kind: "start" as const, ok: page.ok };
   });
 
-  const failed = resultPages.filter((page) => !page.ok).length;
+  const missing = resultPages.filter((page) => page.status === 404).length;
+  const failed = resultPages.filter((page) => !page.ok && page.status !== 404).length;
+  if (missing > 0) {
+    notes.push("Some events are not on the results site yet. They show up here as each one is posted.");
+  }
   if (failed > 0) warnings.push(`${failed} result page${failed === 1 ? "" : "s"} did not load.`);
 
   return assembleGalaSwims({
@@ -172,8 +187,18 @@ async function noteSwimManager(url: string, warnings: string[], sources: { label
   }
 }
 
+async function readSavedResultsSafe(): Promise<{ link: SavedResultsLink | null; warning: string | null }> {
+  try {
+    return { link: await readSavedResults(), warning: null };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "The saved results link could not be read.";
+    return { link: null, warning: `${message} The automatic meet is shown instead.` };
+  }
+}
+
 interface PublicConfig {
-  resultsIndexUrl: string;
+  saved: SavedResultsLink | null;
+  resultsIndexUrl: string | null;
   meetCourse: AppConfig["meetCourse"];
   swimManagerUrl: string | null;
   swimmerName: string;
@@ -186,6 +211,7 @@ interface PublicConfig {
 
 function publicConfig(config: AppConfig): PublicConfig {
   return {
+    saved: null,
     resultsIndexUrl: config.resultsIndexUrl,
     meetCourse: config.meetCourse,
     swimManagerUrl: config.swimManagerUrl,
@@ -200,6 +226,6 @@ function publicConfig(config: AppConfig): PublicConfig {
 
 function revalidateSeconds(): number {
   const parsed = Number(process.env.REVALIDATE_SECONDS);
-  if (!Number.isFinite(parsed)) return 180;
-  return Math.min(3600, Math.max(60, Math.round(parsed)));
+  if (!Number.isFinite(parsed)) return 120;
+  return Math.min(300, Math.max(120, Math.round(parsed)));
 }

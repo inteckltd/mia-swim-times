@@ -11,10 +11,13 @@ export function buildDashboard(input: {
   swims: GalaSwim[];
   meetName: string | null;
   meetCourse: Course;
+  resultsUrl?: string | null;
+  resultsHow?: string;
   rankingsAgeAt: string;
   fallbackName: string;
   membership: string;
   warnings: string[];
+  notes?: string[];
   sources: { label: string; href: string }[];
   fetchedAt: string;
 }): DashboardModel {
@@ -39,10 +42,12 @@ export function buildDashboard(input: {
     ageLine: ageLine(year, rankedAge, input.rankingsAgeAt),
     meetName: input.meetName,
     meetCourseLabel: input.meetCourse === "SC" ? "Short course, 25m" : "Long course, 50m",
+    resultsUrl: input.resultsUrl ?? null,
+    resultsHow: input.resultsHow ?? "",
     galaCards,
     otherCards,
     warnings: input.warnings,
-    notes: [],
+    notes: input.notes ?? [],
     sources: input.sources,
     fetchedAt: input.fetchedAt,
   };

@@ -125,6 +125,8 @@ export interface DashboardModel {
   ageLine: string;
   meetName: string | null;
   meetCourseLabel: string;
+  resultsUrl: string | null;
+  resultsHow: string;
   galaCards: EventCard[];
   otherCards: EventCard[];
   warnings: string[];

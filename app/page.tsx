@@ -3,6 +3,7 @@ import { Shell } from "@/components/Shell";
 import { Dashboard } from "@/components/Dashboard";
 import { isAuthed } from "@/app/actions";
 import { getConfig } from "@/lib/config";
+import { consumeFresh } from "@/lib/fresh";
 import { loadDashboard } from "@/lib/load-swim-data";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +14,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ e
   const config = getConfig();
   if (!config.passcode) return <Gate configured={false} next="/" />;
   if (!(await isAuthed())) return <Gate configured error={params.error === "1"} next="/" />;
-  const model = await loadDashboard();
+  const model = await loadDashboard(await consumeFresh());
   return (
     <Shell active="swims">
       <Dashboard model={model} />

@@ -3,6 +3,7 @@ import { Rankings } from "@/components/Rankings";
 import { Shell } from "@/components/Shell";
 import { isAuthed } from "@/app/actions";
 import { getConfig } from "@/lib/config";
+import { consumeFresh } from "@/lib/fresh";
 import { loadRankings } from "@/lib/load-rankings";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +14,7 @@ export default async function RankingsPage({ searchParams }: { searchParams: Pro
   const config = getConfig();
   if (!config.passcode) return <Gate configured={false} next="/rankings" />;
   if (!(await isAuthed())) return <Gate configured error={params.error === "1"} next="/rankings" />;
-  const model = await loadRankings();
+  const model = await loadRankings(await consumeFresh());
   return (
     <Shell active="rankings">
       <Rankings model={model} />

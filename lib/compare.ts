@@ -49,9 +49,19 @@ export function pbLine(swim: Centiseconds | null, pb: Centiseconds | null, cours
   const name = course === "SC" ? "short course PB" : "long course PB";
   if (pb == null) return `No ${name} on file`;
   const delta = swim - pb;
-  if (delta === 0) return `Level with ${name}`;
-  if (delta < 0) return `−${formatGap(-delta)} vs ${name}`;
-  return `+${formatGap(delta)} vs ${name}`;
+  if (delta === 0) {
+    return `The published ${name} is this race, so it is not used as the time from before the meet.`;
+  }
+  if (delta < 0) return `−${formatGap(-delta)} vs the ${name} from before this result`;
+  return `+${formatGap(delta)} vs the published ${name}`;
+}
+
+function sameAsThisSwim(
+  time: Centiseconds | null,
+  course: Course,
+  swim: TimedSwim | null,
+): boolean {
+  return time != null && swim?.time != null && swim.course === course && swim.time === time;
 }
 
 function bestTime(
@@ -84,8 +94,12 @@ function bestTime(
     const courseName = input.swim.course === "SC" ? "short course" : "long course";
     push(input.swim.time, input.swim.course, `this ${courseName} swim`, 0);
   }
-  push(input.shortCoursePb, "SC", "short course PB", 1);
-  push(input.longCoursePb, "LC", "long course PB", 2);
+  if (!sameAsThisSwim(input.shortCoursePb, "SC", input.swim)) {
+    push(input.shortCoursePb, "SC", "short course PB from before this result", 1);
+  }
+  if (!sameAsThisSwim(input.longCoursePb, "LC", input.swim)) {
+    push(input.longCoursePb, "LC", "long course PB from before this result", 2);
+  }
   found.sort((a, b) => a.time - b.time || a.preference - b.preference);
   return found[0] ?? null;
 }

@@ -22,18 +22,20 @@ const MAX_FETCHES = 5;
 const MAX_START = 501;
 let blockedUntil = 0;
 
-export async function loadRankings(): Promise<RankingsModel> {
+export async function loadRankings(fresh = false): Promise<RankingsModel> {
   const config = getConfig();
   const seasonNote = `Last 12 months, female, age at ${formatAgeAt(config.rankingsAgeAt)}. National is the all-members list covering England, Scotland, Wales and the Crown Dependencies.`;
   const windowNotes = [countyWindow().summary, regionalWindow().summary];
   try {
-    const profile = await cachedProfile(config.membership, config.swimmerName);
+    const profile = fresh
+      ? await readProfile(config.membership, config.swimmerName)
+      : await cachedProfile(config.membership, config.swimmerName);
     const age = profile.yearOfBirth == null ? null : rankingAge(profile.yearOfBirth, config.rankingsAgeAt);
     if (profile.yearOfBirth == null || age == null) {
       return empty(profile, seasonNote, windowNotes, ["Year of birth or the rankings age date could not be used."]);
     }
     const jobs = rankingJobs(profile, age, config.rankingsAgeAt, profile.gender === "male" ? "M" : "F");
-    const cells = await mapPool(jobs, 2, 250, (job) => loadJob(job, profile));
+    const cells = await mapPool(jobs, 2, 250, (job) => loadJob(job, profile, fresh));
     return {
       swimmerName: profile.name || config.swimmerName,
       club: profile.club || "Club not loaded",
@@ -95,10 +97,11 @@ function rankingJobs(profile: SwimmerProfile, age: number, ageAt: string, sex: "
   return jobs;
 }
 
-async function loadJob(job: Job, profile: SwimmerProfile): Promise<JobResult> {
+async function loadJob(job: Job, profile: SwimmerProfile, fresh: boolean): Promise<JobResult> {
   const label = `${RANKING_LEVELS.find((level) => level.id === job.level)?.label} ${eventLabel(job.event)} ${job.course === "SC" ? "short course" : "long course"}`;
   try {
-    const cell = await cachedCell(cellKey(job, profile.membershipNumber ?? ""));
+    const key = cellKey(job, profile.membershipNumber ?? "");
+    const cell = fresh ? await fetchCell(JSON.parse(key) as StoredJob) : await cachedCell(key);
     return { job, cell, blocked: false, warning: null };
   } catch (error) {
     const message = error instanceof Error ? error.message : "This rankings page did not load.";
@@ -112,23 +115,24 @@ async function loadJob(job: Job, profile: SwimmerProfile): Promise<JobResult> {
   }
 }
 
-const cachedProfile = unstable_cache(
-  async (membership: string, expectedName: string) => {
-    const page = await fetchText(`https://www.swimmingresults.org/biogs/biogs_details.php?tiref=${encodeURIComponent(membership)}`);
-    if (isChallenge(page)) throw new Error("Swim England presented a bot check, so rankings were not loaded.");
-    if (!page.ok) throw new Error(`The biography page did not load (${page.status || page.error || "no response"}).`);
-    const profile = parseBiogs(page.text);
-    if (profile.membershipNumber && profile.membershipNumber !== membership) {
-      throw new Error("The biography membership number did not match, so rankings were not loaded.");
-    }
-    if (profile.name && !namesMatch(profile.name, expectedName) && !namesMatch(profile.knownAs ?? "", expectedName)) {
-      throw new Error(`The biography was for ${profile.name}, so rankings were not loaded.`);
-    }
-    return profile;
-  },
-  ["mia-ranking-profile-v1"],
-  { revalidate: 3600, tags: ["rankings-data"] },
-);
+async function readProfile(membership: string, expectedName: string): Promise<SwimmerProfile> {
+  const page = await fetchText(`https://www.swimmingresults.org/biogs/biogs_details.php?tiref=${encodeURIComponent(membership)}`);
+  if (isChallenge(page)) throw new Error("Swim England presented a bot check, so rankings were not loaded.");
+  if (!page.ok) throw new Error(`The biography page did not load (${page.status || page.error || "no response"}).`);
+  const profile = parseBiogs(page.text);
+  if (profile.membershipNumber && profile.membershipNumber !== membership) {
+    throw new Error("The biography membership number did not match, so rankings were not loaded.");
+  }
+  if (profile.name && !namesMatch(profile.name, expectedName) && !namesMatch(profile.knownAs ?? "", expectedName)) {
+    throw new Error(`The biography was for ${profile.name}, so rankings were not loaded.`);
+  }
+  return profile;
+}
+
+const cachedProfile = unstable_cache(readProfile, ["mia-ranking-profile-v1"], {
+  revalidate: 3600,
+  tags: ["rankings-data"],
+});
 
 const cachedCell = unstable_cache(
   async (key: string) => {

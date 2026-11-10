@@ -17,8 +17,26 @@ export function Dashboard({ model }: { model: DashboardModel }) {
         <p className="age">{model.ageLine}</p>
       </section>
 
+      <section className="meetbox">
+        <p className="section-title">Meet loaded</p>
+        <h2>{model.meetName ?? "No meet published"}</h2>
+        <p className="course">{model.meetCourseLabel}</p>
+        <p className="fetched-strong">Results last fetched {when}</p>
+        <p className="detail">{model.resultsHow}</p>
+        <p className="detail">Races appear as the club posts each event. A race that is not listed yet has not been published.</p>
+        {model.resultsUrl ? (
+          <p className="sources">
+            <a href={model.resultsUrl}>Open the results index</a>
+            <a href="/settings">Change this link</a>
+          </p>
+        ) : null}
+      </section>
+
       {model.warnings.map((warning) => (
         <p className="notice" key={warning}>{warning}</p>
+      ))}
+      {model.notes.map((note) => (
+        <p className="detail" key={note}>{note}</p>
       ))}
 
       <section className="stack">
@@ -26,9 +44,9 @@ export function Dashboard({ model }: { model: DashboardModel }) {
         <p className="window">{regionalWindow().summary}</p>
       </section>
 
-      <h2 className="section-title">{model.meetName ?? "Latest gala"} · {model.meetCourseLabel}</h2>
+      <h2 className="section-title">Mia at this meet</h2>
       {model.galaCards.length === 0 ? (
-        <p className="empty">No swims for Mia were on the published results pages.</p>
+        <p className="empty">No swims for Mia are on the published pages yet.</p>
       ) : (
         <div className="cards">
           {model.galaCards.map((card) => (
@@ -62,7 +80,7 @@ export function Dashboard({ model }: { model: DashboardModel }) {
           <a key={source.href} href={source.href}>{source.label}</a>
         ))}
       </p>
-      <p className="fetched">Loaded {when}. Refresh checks the sites again.</p>
+      <p className="fetched">Results last fetched {when}. Opening the app checks again about every two minutes. Refresh fetches immediately.</p>
     </>
   );
 }

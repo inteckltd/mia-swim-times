@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { logout, refreshData } from "@/app/actions";
 
-export function Shell({ active, children }: { active: "swims" | "rankings"; children: React.ReactNode }) {
-  const next = active === "rankings" ? "/rankings" : "/";
+export function Shell({ active, children }: { active: "swims" | "rankings" | "settings"; children: React.ReactNode }) {
+  const next = active === "rankings" ? "/rankings" : active === "settings" ? "/settings" : "/";
   return (
     <>
       <header className="top">
@@ -18,6 +18,7 @@ export function Shell({ active, children }: { active: "swims" | "rankings"; chil
       <nav className="tabs" aria-label="Sections">
         <Link href="/" aria-current={active === "swims" ? "page" : undefined}>Swims</Link>
         <Link href="/rankings" aria-current={active === "rankings" ? "page" : undefined}>Rankings</Link>
+        <Link href="/settings" aria-current={active === "settings" ? "page" : undefined}>Settings</Link>
       </nav>
       <main>
         {children}

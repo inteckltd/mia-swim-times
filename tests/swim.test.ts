@@ -10,6 +10,8 @@ import { rankingListUrl } from "@/lib/ranking-query";
 import { assembleGalaSwims, parseResultPage, parseResultsDocument } from "@/lib/parse-sportsystems";
 import { isSwimManagerLogin } from "@/lib/swimmanager";
 import { qualifyingWindowLine } from "@/lib/windows";
+import { chooseResultsSource, findResultsIndex } from "@/lib/meet-source";
+import { assessResultsHtml, httpUrl } from "@/lib/validate-results";
 
 function fixture(path: string): string {
   return readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -110,7 +112,7 @@ describe("biography and results fixtures", () => {
     });
     const card = model.galaCards[0];
     expect(card.headline).toBe("35.89");
-    expect(card.pbLine).toBe("Level with short course PB");
+    expect(card.pbLine).toContain("published short course PB is this race");
     expect(card.entry).toContain("37.00");
     expect(card.summary).toBe("Achieved county by 0.61s; needs 3.91s more for regional.");
     expect(card.windowLine).toBe("In the county and regional qualifying windows.");
@@ -142,7 +144,22 @@ describe("qualifying comparison and windows", () => {
     });
     expect(comparison.summary).toMatch(/^Needs .* more for county/);
     expect(comparison.tone).toBe("short");
-    expect(pbLine(4000, 3589, "SC")).toBe("+4.11s vs short course PB");
+    expect(pbLine(4000, 3589, "SC")).toBe("+4.11s vs the published short course PB");
+    expect(pbLine(3500, 3589, "SC")).toBe("−0.89s vs the short course PB from before this result");
+    expect(pbLine(3589, 3589, "SC")).toContain("not used as the time from before the meet");
+  });
+
+  it("uses a faster gala swim against the standards, and the older PB only as the previous best", () => {
+    const comparison = compareStandards({
+      event: { distance: 50, stroke: "freestyle" },
+      gender: "female",
+      yearOfBirth: 2016,
+      swim: { course: "SC", time: 3500 },
+      shortCoursePb: 3589,
+      longCoursePb: null,
+    });
+    expect(comparison.summary).toContain("1.50s");
+    expect(comparison.detail).toContain("this short course swim");
   });
 
   it("says whether a swim date is inside the published windows", () => {
@@ -194,6 +211,50 @@ describe("rankings", () => {
     expect(url).toContain("Level=C");
   });
 
+});
+
+describe("results discovery", () => {
+  it("reads the club live-results link and ignores other links", () => {
+    const html = `<a href="https://www.swimwarriors.org.uk/galas">Galas</a>
+      <a href="https://swimwarriors.z33.web.core.windows.net/index.htm">Live results</a>`;
+    expect(findResultsIndex(html)).toBe("https://swimwarriors.z33.web.core.windows.net/index.htm");
+    expect(findResultsIndex("<p>No results link</p>")).toBeNull();
+  });
+
+  it("uses a saved link, then the discovered meet, then RESULTS_INDEX_URL", () => {
+    const saved = chooseResultsSource({
+      saved: { url: "https://example.test/index.htm", savedAt: "2026-11-10T17:00:00.000Z" },
+      discovered: "https://club.test/index.htm",
+      fallback: "https://env.test/index.htm",
+    });
+    expect(saved.url).toBe("https://example.test/index.htm");
+    expect(saved.how).toContain("saved in Settings");
+    expect(saved.how).toContain("10 Nov 2026");
+
+    const discovered = chooseResultsSource({
+      saved: null,
+      discovered: "https://club.test/index.htm",
+      fallback: "https://env.test/index.htm",
+    });
+    expect(discovered.url).toBe("https://club.test/index.htm");
+
+    const fallback = chooseResultsSource({ saved: null, discovered: null, fallback: "https://env.test/index.htm" });
+    expect(fallback.url).toBe("https://env.test/index.htm");
+    expect(fallback.how).toContain("RESULTS_INDEX_URL");
+  });
+
+  it("accepts a SportSystems index and rejects a single race page", () => {
+    const index = assessResultsHtml(fixture("fixtures/sportsystems/index.htm"));
+    expect(index.ok).toBe(true);
+    if (index.ok) expect(index.kind).toBe("frameset");
+    const before = assessResultsHtml(fixture("fixtures/sportsystems/before.htm"));
+    expect(before.ok).toBe(true);
+    if (before.ok) expect(before.kind).toBe("meet");
+    expect(assessResultsHtml(fixture("fixtures/sportsystems/RG1H103.HTM")).ok).toBe(false);
+    expect(assessResultsHtml("<html><body><h1>Not results</h1></body></html>").ok).toBe(false);
+    expect(httpUrl("javascript:alert(1)")).toBeNull();
+    expect(httpUrl("https://swimwarriors.z33.web.core.windows.net/index.htm")).toContain("index.htm");
+  });
 });
 
 describe("swim manager", () => {
